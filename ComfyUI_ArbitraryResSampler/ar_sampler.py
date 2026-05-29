@@ -10,15 +10,15 @@ import torch.nn.functional as F
 import comfy.sample
 import comfy.samplers
 import comfy.utils
-import comfy.model_management
 
 try:
     from comfy.samplers import KSamplerX0Inpaint
-except Exception:  # pragma: no cover - Comfy internal fallback guard
+except Exception:
     KSamplerX0Inpaint = None
 
 from .constants import LATENT_SCALE_FACTOR
 from .latent_ops import low_frequency_preserve
+from .sdxl_conditioning import apply_tile_conditioning
 from .tiles import feather_mask, tile_positions
 
 
@@ -26,13 +26,13 @@ from .tiles import feather_mask, tile_positions
 class ARTiledSamplerConfig:
     tile_pixels: int = 1024
     overlap_pixels: int = 256
+    halo_pixels: int = 192
     global_context_strength: float = 0.35
     global_context_pixels: int = 1024
     lowfreq_factor: int = 8
     tile_mode: str = "auto"  # auto, always, off
     tile_threshold_pixels: int = 1536
-    sigma_blend_start: float = 0.0
-    sigma_blend_end: float = 1.0
+    conditioning_mode: str = "sdxl_tile_crop"  # plain, sdxl_tile_crop
 
     @property
     def tile_latents(self) -> int:
@@ -41,6 +41,10 @@ class ARTiledSamplerConfig:
     @property
     def overlap_latents(self) -> int:
         return max(0, int(round(self.overlap_pixels / LATENT_SCALE_FACTOR)))
+
+    @property
+    def halo_latents(self) -> int:
+        return max(0, int(round(self.halo_pixels / LATENT_SCALE_FACTOR)))
 
     @property
     def tile_threshold_latents(self) -> int:
@@ -70,26 +74,80 @@ def _should_tile(x: torch.Tensor, config: ARTiledSamplerConfig) -> bool:
     return max(height, width) > config.tile_threshold_latents
 
 
-def _crop_extra_args(extra_args: dict, y: int, x: int, height: int, width: int) -> dict:
-    """Crop mask-like tensors in extra_args when they spatially match x.
+def _crop_spatial_tensor(tensor: torch.Tensor, full_h: int, full_w: int, y: int, x: int, h: int, w: int):
+    if tensor.ndim >= 2 and tensor.shape[-2] == full_h and tensor.shape[-1] == full_w:
+        return tensor[..., y:y + h, x:x + w]
+    return tensor
 
-    The common no-mask path is untouched. For inpaint/noise masks this avoids
-    immediate shape mismatches, but complex inpaint workflows are still treated
-    as experimental because Comfy internals also keep latent_image/noise state
-    inside KSamplerX0Inpaint.
-    """
-    cropped = dict(extra_args)
-    mask = cropped.get("denoise_mask", None)
-    if isinstance(mask, torch.Tensor) and mask.ndim >= 3:
-        cropped["denoise_mask"] = mask[..., y:y + height, x:x + width]
+
+def _crop_nested(obj, full_h: int, full_w: int, y: int, x: int, h: int, w: int):
+    if isinstance(obj, torch.Tensor):
+        return _crop_spatial_tensor(obj, full_h, full_w, y, x, h, w)
+
+    if isinstance(obj, dict):
+        return {key: _crop_nested(value, full_h, full_w, y, x, h, w) for key, value in obj.items()}
+
+    if isinstance(obj, list):
+        return [_crop_nested(value, full_h, full_w, y, x, h, w) for value in obj]
+
+    if isinstance(obj, tuple):
+        return tuple(_crop_nested(value, full_h, full_w, y, x, h, w) for value in obj)
+
+    return obj
+
+
+def _prepare_tile_extra_args(
+    extra_args: dict,
+    full_latent_h: int,
+    full_latent_w: int,
+    tile_y: int,
+    tile_x: int,
+    tile_h: int,
+    tile_w: int,
+    conditioning_mode: str,
+) -> dict:
+    cropped = _crop_nested(extra_args, full_latent_h, full_latent_w, tile_y, tile_x, tile_h, tile_w)
+
+    if conditioning_mode != "plain":
+        cropped = apply_tile_conditioning(
+            cropped,
+            full_width=int(full_latent_w * LATENT_SCALE_FACTOR),
+            full_height=int(full_latent_h * LATENT_SCALE_FACTOR),
+            crop_x=int(tile_x * LATENT_SCALE_FACTOR),
+            crop_y=int(tile_y * LATENT_SCALE_FACTOR),
+            target_width=int(tile_w * LATENT_SCALE_FACTOR),
+            target_height=int(tile_h * LATENT_SCALE_FACTOR),
+            mode=conditioning_mode,
+        )
+
     return cropped
 
 
-def _call_model(model, x: torch.Tensor, sigma: torch.Tensor, extra_args: dict, seed_offset: int = 0) -> torch.Tensor:
-    call_args = dict(extra_args)
-    if seed_offset:
-        call_args["seed"] = int(call_args.get("seed", 0) or 0) + int(seed_offset)
-    return model(x, _sigma_batch(sigma, x.shape[0]), **call_args)
+def _prepare_global_context_args(
+    extra_args: dict,
+    full_latent_h: int,
+    full_latent_w: int,
+    context_h: int,
+    context_w: int,
+    conditioning_mode: str,
+) -> dict:
+    prepared = dict(extra_args)
+    if conditioning_mode != "plain":
+        prepared = apply_tile_conditioning(
+            prepared,
+            full_width=int(full_latent_w * LATENT_SCALE_FACTOR),
+            full_height=int(full_latent_h * LATENT_SCALE_FACTOR),
+            crop_x=0,
+            crop_y=0,
+            target_width=int(context_w * LATENT_SCALE_FACTOR),
+            target_height=int(context_h * LATENT_SCALE_FACTOR),
+            mode=conditioning_mode,
+        )
+    return prepared
+
+
+def _call_model(model, x: torch.Tensor, sigma: torch.Tensor, extra_args: dict) -> torch.Tensor:
+    return model(x, _sigma_batch(sigma, x.shape[0]), **extra_args)
 
 
 def _tiled_model_prediction(
@@ -99,48 +157,70 @@ def _tiled_model_prediction(
     extra_args: dict,
     config: ARTiledSamplerConfig,
 ) -> torch.Tensor:
-    batch, channels, latent_height, latent_width = x.shape
+    batch, _, latent_height, latent_width = x.shape
     if batch != 1:
         raise ValueError("AR tiled sampler currently supports batch_size=1 only.")
 
-    tile_width = min(config.tile_latents, latent_width)
-    tile_height = min(config.tile_latents, latent_height)
-    overlap_width = max(0, min(config.overlap_latents, tile_width - 1))
-    overlap_height = max(0, min(config.overlap_latents, tile_height - 1))
+    core_width = min(config.tile_latents, latent_width)
+    core_height = min(config.tile_latents, latent_height)
+    overlap_width = max(0, min(config.overlap_latents, core_width - 1))
+    overlap_height = max(0, min(config.overlap_latents, core_height - 1))
+    halo = config.halo_latents
 
-    xs = tile_positions(latent_width, tile_width, overlap_width)
-    ys = tile_positions(latent_height, tile_height, overlap_height)
+    xs = tile_positions(latent_width, core_width, overlap_width)
+    ys = tile_positions(latent_height, core_height, overlap_height)
 
     accumulator = torch.zeros_like(x)
     weights = torch.zeros((1, 1, latent_height, latent_width), device=x.device, dtype=x.dtype)
 
-    tile_index = 0
-    for y in ys:
-        for px in xs:
-            current_height = min(tile_height, latent_height - y)
-            current_width = min(tile_width, latent_width - px)
-            tile_x = x[:, :, y:y + current_height, px:px + current_width]
-            tile_args = _crop_extra_args(extra_args, y, px, current_height, current_width)
+    for core_y in ys:
+        for core_x in xs:
+            current_core_height = min(core_height, latent_height - core_y)
+            current_core_width = min(core_width, latent_width - core_x)
 
-            denoised_tile = _call_model(
-                model,
-                tile_x,
-                sigma,
-                tile_args,
-                seed_offset=tile_index * 9973,
+            expanded_y0 = max(0, core_y - halo)
+            expanded_x0 = max(0, core_x - halo)
+            expanded_y1 = min(latent_height, core_y + current_core_height + halo)
+            expanded_x1 = min(latent_width, core_x + current_core_width + halo)
+
+            expanded_height = expanded_y1 - expanded_y0
+            expanded_width = expanded_x1 - expanded_x0
+
+            tile_x = x[:, :, expanded_y0:expanded_y1, expanded_x0:expanded_x1]
+
+            tile_args = _prepare_tile_extra_args(
+                extra_args=extra_args,
+                full_latent_h=latent_height,
+                full_latent_w=latent_width,
+                tile_y=expanded_y0,
+                tile_x=expanded_x0,
+                tile_h=expanded_height,
+                tile_w=expanded_width,
+                conditioning_mode=config.conditioning_mode,
             )
 
+            denoised_expanded = _call_model(model, tile_x, sigma, tile_args)
+
+            core_rel_y = core_y - expanded_y0
+            core_rel_x = core_x - expanded_x0
+            denoised_core = denoised_expanded[
+                :,
+                :,
+                core_rel_y:core_rel_y + current_core_height,
+                core_rel_x:core_rel_x + current_core_width,
+            ]
+
             weight = feather_mask(
-                current_height,
-                current_width,
+                current_core_height,
+                current_core_width,
                 overlap_height,
                 overlap_width,
                 device=x.device,
                 dtype=x.dtype,
             )
-            accumulator[:, :, y:y + current_height, px:px + current_width] += denoised_tile * weight
-            weights[:, :, y:y + current_height, px:px + current_width] += weight
-            tile_index += 1
+
+            accumulator[:, :, core_y:core_y + current_core_height, core_x:core_x + current_core_width] += denoised_core * weight
+            weights[:, :, core_y:core_y + current_core_height, core_x:core_x + current_core_width] += weight
 
     return accumulator / weights.clamp_min(1e-6)
 
@@ -160,14 +240,30 @@ def _global_context_prediction(
     max_side = max(latent_height, latent_width)
 
     if max_side <= max_context_latents:
-        return _call_model(model, x, sigma, extra_args)
+        context_args = _prepare_global_context_args(
+            extra_args=extra_args,
+            full_latent_h=latent_height,
+            full_latent_w=latent_width,
+            context_h=latent_height,
+            context_w=latent_width,
+            conditioning_mode=config.conditioning_mode,
+        )
+        return _call_model(model, x, sigma, context_args)
 
     scale = max_context_latents / max_side
     context_height = max(8, int(round(latent_height * scale)))
     context_width = max(8, int(round(latent_width * scale)))
 
     context_x = F.interpolate(x, size=(context_height, context_width), mode="bilinear", align_corners=False)
-    context_prediction = _call_model(model, context_x, sigma, extra_args)
+    context_args = _prepare_global_context_args(
+        extra_args=extra_args,
+        full_latent_h=latent_height,
+        full_latent_w=latent_width,
+        context_h=context_height,
+        context_w=context_width,
+        conditioning_mode=config.conditioning_mode,
+    )
+    context_prediction = _call_model(model, context_x, sigma, context_args)
     return F.interpolate(context_prediction, size=(latent_height, latent_width), mode="bilinear", align_corners=False)
 
 
@@ -179,7 +275,15 @@ def _predict_denoised(
     config: ARTiledSamplerConfig,
 ) -> torch.Tensor:
     if not _should_tile(x, config):
-        return _call_model(model, x, sigma, extra_args)
+        direct_args = _prepare_global_context_args(
+            extra_args=extra_args,
+            full_latent_h=x.shape[-2],
+            full_latent_w=x.shape[-1],
+            context_h=x.shape[-2],
+            context_w=x.shape[-1],
+            conditioning_mode=config.conditioning_mode,
+        )
+        return _call_model(model, x, sigma, direct_args)
 
     tiled_prediction = _tiled_model_prediction(model, x, sigma, extra_args, config)
     global_prediction = _global_context_prediction(model, x, sigma, extra_args, config)
@@ -196,13 +300,6 @@ def _predict_denoised(
 
 
 class AREulerTiledFusionSampler:
-    """Comfy-compatible sampler object using tiled per-step denoised fusion.
-
-    This is intentionally not registered as a global Comfy sampler. The node
-    passes an instance directly into comfy.sample.sample_custom(...), so the
-    plugin remains isolated and reversible.
-    """
-
     def __init__(self, config: Optional[ARTiledSamplerConfig] = None):
         self.config = config or ARTiledSamplerConfig()
 
@@ -218,7 +315,7 @@ class AREulerTiledFusionSampler:
         disable_pbar=False,
     ):
         if KSamplerX0Inpaint is None:
-            raise RuntimeError("Comfy KSamplerX0Inpaint is not available; update ComfyUI or use the legacy hierarchical sampler.")
+            raise RuntimeError("Comfy KSamplerX0Inpaint is not available; update ComfyUI or switch back to the legacy sampler.")
 
         extra_args = dict(extra_args)
         extra_args["denoise_mask"] = denoise_mask
@@ -282,8 +379,10 @@ def sample_latent_ar_fusion(
     denoise: float,
     tile_pixels: int,
     overlap_pixels: int,
+    halo_pixels: int,
     lowfreq_preservation: float,
     lowfreq_factor: int,
+    conditioning_mode: str = "sdxl_tile_crop",
     global_context_pixels: int = 1024,
     tile_mode: str = "auto",
     tile_threshold_pixels: int = 1536,
@@ -308,11 +407,13 @@ def sample_latent_ar_fusion(
         ARTiledSamplerConfig(
             tile_pixels=int(tile_pixels),
             overlap_pixels=int(overlap_pixels),
+            halo_pixels=int(halo_pixels),
             global_context_strength=float(lowfreq_preservation),
             global_context_pixels=int(global_context_pixels),
             lowfreq_factor=int(lowfreq_factor),
             tile_mode=tile_mode,
             tile_threshold_pixels=int(tile_threshold_pixels),
+            conditioning_mode=conditioning_mode,
         )
     )
 
@@ -327,7 +428,7 @@ def sample_latent_ar_fusion(
         latent_image=latent_image,
         noise_mask=latent.get("noise_mask", None),
         callback=None,
-        disable_pbar=False,
+        disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED,
         seed=int(seed),
     )
 

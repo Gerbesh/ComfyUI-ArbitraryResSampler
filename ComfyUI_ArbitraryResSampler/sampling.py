@@ -95,6 +95,7 @@ def tiled_refine(
     latent: dict,
     tile_pixels: int,
     overlap_pixels: int,
+    halo_pixels: int,
     local_denoise: float,
     fractal_strength: float,
     octaves: int,
@@ -102,6 +103,7 @@ def tiled_refine(
     lowfreq_preservation: float,
     lowfreq_factor: int,
     tile_seed_mode: str,
+    conditioning_mode: str,
     local_sampler: str = "legacy",
 ) -> dict:
     if local_sampler == "ar_fusion":
@@ -117,8 +119,10 @@ def tiled_refine(
             denoise=local_denoise,
             tile_pixels=tile_pixels,
             overlap_pixels=overlap_pixels,
+            halo_pixels=halo_pixels,
             lowfreq_preservation=lowfreq_preservation,
             lowfreq_factor=lowfreq_factor,
+            conditioning_mode=conditioning_mode,
             tile_mode="always",
             tile_threshold_pixels=tile_pixels,
             disable_noise=False,
@@ -217,6 +221,7 @@ def hierarchical_sample(
     global_max_megapixels: float,
     tile_pixels: int,
     overlap_pixels: int,
+    halo_pixels: int,
     fractal_strength: float,
     octaves: int,
     persistence: float,
@@ -224,6 +229,7 @@ def hierarchical_sample(
     lowfreq_factor: int,
     upscale_mode: str,
     tile_seed_mode: str,
+    conditioning_mode: str,
     local_sampler: str = "legacy",
     source_latent: Optional[dict] = None,
 ) -> tuple[dict, str]:
@@ -295,6 +301,7 @@ def hierarchical_sample(
                 latent=latent,
                 tile_pixels=tile_pixels,
                 overlap_pixels=overlap_pixels,
+                halo_pixels=halo_pixels,
                 local_denoise=local_denoise,
                 fractal_strength=fractal_strength,
                 octaves=octaves,
@@ -302,6 +309,7 @@ def hierarchical_sample(
                 lowfreq_preservation=lowfreq_preservation,
                 lowfreq_factor=lowfreq_factor,
                 tile_seed_mode=tile_seed_mode,
+                conditioning_mode=conditioning_mode,
                 local_sampler=local_sampler,
             )
 

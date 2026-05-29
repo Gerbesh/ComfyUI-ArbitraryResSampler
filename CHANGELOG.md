@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0
+
+- Added halo-aware tiled fusion:
+  - tiles are expanded with surrounding context before model inference
+  - only the core area is merged back into the final prediction
+- Added SDXL tile-aware conditioning helper:
+  - full-frame width/height are preserved
+  - crop_w / crop_h track the tile position inside the large frame
+  - target_width / target_height track the tile viewport size
+- Added `conditioning_mode`:
+  - `plain`
+  - `sdxl_tile_crop`
+- Added `halo_pixels` control to both:
+  - `AR Tiled Fusion Sampler`
+  - `Arbitrary Resolution Hierarchical Sampler`
+- Wired the custom `ar_fusion` path to use halo context + core-only merge + tile-aware conditioning.
+
 ## 0.2.0
 
 - Added `AR Tiled Fusion Sampler`, a standalone custom sampler node.
