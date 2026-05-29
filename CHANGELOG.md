@@ -1,4 +1,10 @@
-# Changelog
+﻿# Changelog
+
+## 0.3.1
+
+- Added same-size source latent refinement path.
+- Arbitrary Resolution Hierarchical Sampler now runs local refine even when source_latent already matches 	arget_width / 	arget_height.
+- Added same_size_refine toggle, enabled by default.
 
 ## 0.3.0
 

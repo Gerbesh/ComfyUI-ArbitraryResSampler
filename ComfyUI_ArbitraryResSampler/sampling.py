@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Optional
 
@@ -260,6 +260,59 @@ def hierarchical_sample(
         if (start_width, start_height) != stages[0]:
             latent = resize_latent(latent, stages[0][0], stages[0][1], mode=upscale_mode)
 
+    if source_latent is not None and len(stages) == 1 and bool(same_size_refine):
+        stage_index = 0
+        stage_width, stage_height = stages[0]
+
+        if fractal_strength > 0.0:
+            latent = inject_fractal_noise(
+                latent,
+                seed=int(seed) + 99991,
+                strength=fractal_strength,
+                octaves=octaves,
+                persistence=persistence,
+            )
+
+        megapixels = (stage_width * stage_height) / 1_000_000.0
+        if global_denoise > 0.0 and megapixels <= float(global_max_megapixels):
+            latent = sample_latent(
+                model=model,
+                seed=int(seed) + 31337,
+                steps=steps,
+                cfg=cfg,
+                sampler_name=sampler_name,
+                scheduler=scheduler,
+                positive=positive,
+                negative=negative,
+                latent=latent,
+                denoise=global_denoise,
+                disable_noise=False,
+            )
+
+        if local_denoise > 0.0:
+            latent = tiled_refine(
+                model=model,
+                seed=int(seed) + 65537,
+                steps=steps,
+                cfg=cfg,
+                sampler_name=sampler_name,
+                scheduler=scheduler,
+                positive=positive,
+                negative=negative,
+                latent=latent,
+                tile_pixels=tile_pixels,
+                overlap_pixels=overlap_pixels,
+                halo_pixels=halo_pixels,
+                local_denoise=local_denoise,
+                fractal_strength=0.0,
+                octaves=octaves,
+                persistence=persistence,
+                lowfreq_preservation=lowfreq_preservation,
+                lowfreq_factor=lowfreq_factor,
+                tile_seed_mode=tile_seed_mode,
+                conditioning_mode=conditioning_mode,
+                local_sampler=local_sampler,
+            )
     for stage_index, (stage_width, stage_height) in enumerate(stages[1:], start=1):
         latent = resize_latent(latent, stage_width, stage_height, mode=upscale_mode)
 
