@@ -23,6 +23,7 @@ from .resolution import (
     pixels_from_latent_size,
 )
 from .tiles import feather_mask, tile_positions
+from .ar_sampler import sample_latent_ar_fusion
 
 
 def sample_latent(
@@ -101,7 +102,28 @@ def tiled_refine(
     lowfreq_preservation: float,
     lowfreq_factor: int,
     tile_seed_mode: str,
+    local_sampler: str = "legacy",
 ) -> dict:
+    if local_sampler == "ar_fusion":
+        return sample_latent_ar_fusion(
+            model=model,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            scheduler=scheduler,
+            positive=positive,
+            negative=negative,
+            latent=latent,
+            denoise=local_denoise,
+            tile_pixels=tile_pixels,
+            overlap_pixels=overlap_pixels,
+            lowfreq_preservation=lowfreq_preservation,
+            lowfreq_factor=lowfreq_factor,
+            tile_mode="always",
+            tile_threshold_pixels=tile_pixels,
+            disable_noise=False,
+        )
+
     samples = latent["samples"]
     batch, _, latent_height, latent_width = samples.shape
     if batch != 1:
@@ -202,6 +224,7 @@ def hierarchical_sample(
     lowfreq_factor: int,
     upscale_mode: str,
     tile_seed_mode: str,
+    local_sampler: str = "legacy",
     source_latent: Optional[dict] = None,
 ) -> tuple[dict, str]:
     target_width, target_height = normalize_resolution(target_width, target_height)
@@ -279,6 +302,7 @@ def hierarchical_sample(
                 lowfreq_preservation=lowfreq_preservation,
                 lowfreq_factor=lowfreq_factor,
                 tile_seed_mode=tile_seed_mode,
+                local_sampler=local_sampler,
             )
 
     return latent, format_stage_plan(stages)
