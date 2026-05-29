@@ -1,5 +1,10 @@
 ﻿# Changelog
 
+## 0.3.3
+
+- Moved same_size_refine to the end of the node widget list to avoid breaking existing ComfyUI workflows.
+- Fixed widget value shifts that caused validation errors for global_max_megapixels, halo_pixels, conditioning_mode, fractal_strength, lowfreq_preservation, upscale_mode and tile_seed_mode.
+
 ## 0.3.2
 
 - Fixed same_size_refine not being passed into the hierarchical sampler function.
@@ -49,4 +54,5 @@
 - Added low-frequency preservation after tiled refinement.
 - Added stage plan helper node.
 - Added Python syntax-check GitHub Action.
+
 

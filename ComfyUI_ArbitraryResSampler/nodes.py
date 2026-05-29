@@ -189,7 +189,6 @@ class ArbitraryResolutionHierarchicalSampler:
         global_denoise,
         local_denoise,
         local_sampler,
-        same_size_refine,
         global_max_megapixels,
         tile_pixels,
         overlap_pixels,
@@ -251,4 +250,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ARTiledFusionSampler": "AR Tiled Fusion Sampler",
     "ArbitraryResolutionHierarchicalSampler": "Arbitrary Resolution Hierarchical Sampler",
 }
+
 
