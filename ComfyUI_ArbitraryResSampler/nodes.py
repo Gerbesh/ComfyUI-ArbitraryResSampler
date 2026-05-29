@@ -202,7 +202,9 @@ class ArbitraryResolutionHierarchicalSampler:
         upscale_mode,
         tile_seed_mode,
         source_latent=None,
+        **kwargs,
     ):
+        same_size_refine = bool(locals().get("same_size_refine", kwargs.pop("same_size_refine", True)))
         latent, plan = hierarchical_sample(
             model=model,
             positive=positive,

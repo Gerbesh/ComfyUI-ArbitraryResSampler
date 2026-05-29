@@ -1,5 +1,11 @@
 ﻿# Changelog
 
+## 0.3.4
+
+- Fixed `same_size_refine` ComfyUI runtime keyword mismatch.
+- Made `ArbitraryResolutionHierarchicalSampler.run()` tolerant to schema/widget cache drift by accepting extra keyword arguments.
+
+
 ## 0.3.3
 
 - Moved same_size_refine to the end of the node widget list to avoid breaking existing ComfyUI workflows.
