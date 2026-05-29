@@ -6,6 +6,7 @@ from .ar_sampler import sample_latent_ar_fusion
 from .noise import inject_fractal_noise
 from .resolution import build_stage_schedule, fit_base_resolution, format_stage_plan, normalize_resolution
 from .sampling import hierarchical_sample
+from .vae_tiled import ARVAEEncodeTiled, ARVAEDecodeTiled, ARVAERoundtrip
 
 
 class FractalLatentNoise:
@@ -244,6 +245,9 @@ NODE_CLASS_MAPPINGS = {
     "ArbitraryResolutionPlan": ArbitraryResolutionPlan,
     "ARTiledFusionSampler": ARTiledFusionSampler,
     "ArbitraryResolutionHierarchicalSampler": ArbitraryResolutionHierarchicalSampler,
+    "ARVAEEncodeTiled": ARVAEEncodeTiled,
+    "ARVAEDecodeTiled": ARVAEDecodeTiled,
+    "ARVAERoundtrip": ARVAERoundtrip,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -251,6 +255,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ArbitraryResolutionPlan": "Arbitrary Resolution Plan",
     "ARTiledFusionSampler": "AR Tiled Fusion Sampler",
     "ArbitraryResolutionHierarchicalSampler": "Arbitrary Resolution Hierarchical Sampler",
+    "ARVAEEncodeTiled": "AR VAE Encode Tiled",
+    "ARVAEDecodeTiled": "AR VAE Decode Tiled",
+    "ARVAERoundtrip": "AR VAE Roundtrip",
 }
 
 

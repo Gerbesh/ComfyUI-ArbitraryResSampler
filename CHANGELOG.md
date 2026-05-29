@@ -1,5 +1,13 @@
 ﻿# Changelog
 
+## 0.4.0
+
+- Added `AR VAE Encode Tiled`.
+- Added `AR VAE Decode Tiled`.
+- Added `AR VAE Roundtrip` diagnostic node.
+- Implemented halo-aware, core-only tiled VAE encode/decode with overlap blending.
+
+
 ## 0.3.4
 
 - Fixed `same_size_refine` ComfyUI runtime keyword mismatch.
