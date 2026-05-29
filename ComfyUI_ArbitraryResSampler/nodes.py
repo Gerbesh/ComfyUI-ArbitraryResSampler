@@ -148,6 +148,7 @@ class ArbitraryResolutionHierarchicalSampler:
                 "global_denoise": ("FLOAT", {"default": 0.18, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "local_denoise": ("FLOAT", {"default": 0.24, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "local_sampler": (["legacy", "ar_fusion"], {"default": "ar_fusion"}),
+                "same_size_refine": ("BOOLEAN", {"default": True}),
                 "global_max_megapixels": ("FLOAT", {"default": 3.0, "min": 0.25, "max": 64.0, "step": 0.05}),
                 "tile_pixels": ("INT", {"default": 1024, "min": 256, "max": 4096, "step": 64}),
                 "overlap_pixels": ("INT", {"default": 256, "min": 0, "max": 2048, "step": 32}),
@@ -188,6 +189,7 @@ class ArbitraryResolutionHierarchicalSampler:
         global_denoise,
         local_denoise,
         local_sampler,
+        same_size_refine,
         global_max_megapixels,
         tile_pixels,
         overlap_pixels,
@@ -230,6 +232,7 @@ class ArbitraryResolutionHierarchicalSampler:
             tile_seed_mode=tile_seed_mode,
             conditioning_mode=conditioning_mode,
             local_sampler=local_sampler,
+            same_size_refine=same_size_refine,
             source_latent=source_latent,
         )
         return (latent, plan)
@@ -248,3 +251,4 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ARTiledFusionSampler": "AR Tiled Fusion Sampler",
     "ArbitraryResolutionHierarchicalSampler": "Arbitrary Resolution Hierarchical Sampler",
 }
+

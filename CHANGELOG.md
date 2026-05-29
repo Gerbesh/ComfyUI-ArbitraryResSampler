@@ -1,5 +1,10 @@
 ﻿# Changelog
 
+## 0.3.2
+
+- Fixed same_size_refine not being passed into the hierarchical sampler function.
+- Fixed ComfyUI runtime NameError when source latent already matches target resolution.
+
 ## 0.3.1
 
 - Added same-size source latent refinement path.
@@ -44,3 +49,4 @@
 - Added low-frequency preservation after tiled refinement.
 - Added stage plan helper node.
 - Added Python syntax-check GitHub Action.
+

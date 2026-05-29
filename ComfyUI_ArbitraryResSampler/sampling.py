@@ -231,6 +231,7 @@ def hierarchical_sample(
     tile_seed_mode: str,
     conditioning_mode: str,
     local_sampler: str = "legacy",
+    same_size_refine: bool = True,
     source_latent: Optional[dict] = None,
 ) -> tuple[dict, str]:
     target_width, target_height = normalize_resolution(target_width, target_height)
@@ -367,3 +368,4 @@ def hierarchical_sample(
             )
 
     return latent, format_stage_plan(stages)
+
