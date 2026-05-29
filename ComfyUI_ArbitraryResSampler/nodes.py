@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import comfy.samplers
 
+from .ar_sampler import sample_latent_ar_fusion
 from .noise import inject_fractal_noise
 from .resolution import build_stage_schedule, fit_base_resolution, format_stage_plan, normalize_resolution
 from .sampling import hierarchical_sample
@@ -53,6 +54,74 @@ class ArbitraryResolutionPlan:
         return (format_stage_plan(stages), base_width, base_height)
 
 
+class ARTiledFusionSampler:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "positive": ("CONDITIONING",),
+                "negative": ("CONDITIONING",),
+                "latent": ("LATENT",),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF, "control_after_generate": True}),
+                "steps": ("INT", {"default": 24, "min": 1, "max": 10000}),
+                "cfg": ("FLOAT", {"default": 6.0, "min": 0.0, "max": 100.0, "step": 0.1}),
+                "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
+                "denoise": ("FLOAT", {"default": 0.28, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "tile_pixels": ("INT", {"default": 1024, "min": 256, "max": 4096, "step": 64}),
+                "overlap_pixels": ("INT", {"default": 256, "min": 0, "max": 2048, "step": 32}),
+                "tile_mode": (["auto", "always", "off"], {"default": "auto"}),
+                "tile_threshold_pixels": ("INT", {"default": 1536, "min": 256, "max": 8192, "step": 64}),
+                "lowfreq_preservation": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "lowfreq_factor": ("INT", {"default": 8, "min": 2, "max": 64}),
+            }
+        }
+
+    RETURN_TYPES = ("LATENT",)
+    RETURN_NAMES = ("latent",)
+    FUNCTION = "run"
+    CATEGORY = "sampling/arbitrary_res"
+
+    def run(
+        self,
+        model,
+        positive,
+        negative,
+        latent,
+        seed,
+        steps,
+        cfg,
+        scheduler,
+        denoise,
+        tile_pixels,
+        overlap_pixels,
+        tile_mode,
+        tile_threshold_pixels,
+        lowfreq_preservation,
+        lowfreq_factor,
+    ):
+        return (
+            sample_latent_ar_fusion(
+                model=model,
+                seed=seed,
+                steps=steps,
+                cfg=cfg,
+                scheduler=scheduler,
+                positive=positive,
+                negative=negative,
+                latent=latent,
+                denoise=denoise,
+                tile_pixels=tile_pixels,
+                overlap_pixels=overlap_pixels,
+                lowfreq_preservation=lowfreq_preservation,
+                lowfreq_factor=lowfreq_factor,
+                tile_mode=tile_mode,
+                tile_threshold_pixels=tile_threshold_pixels,
+                disable_noise=False,
+            ),
+        )
+
+
 class ArbitraryResolutionHierarchicalSampler:
     @classmethod
     def INPUT_TYPES(cls):
@@ -72,6 +141,7 @@ class ArbitraryResolutionHierarchicalSampler:
                 "max_scale_per_stage": ("FLOAT", {"default": 1.55, "min": 1.1, "max": 3.0, "step": 0.05}),
                 "global_denoise": ("FLOAT", {"default": 0.18, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "local_denoise": ("FLOAT", {"default": 0.26, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "local_sampler": (["legacy", "ar_fusion"], {"default": "ar_fusion"}),
                 "global_max_megapixels": ("FLOAT", {"default": 3.0, "min": 0.25, "max": 64.0, "step": 0.05}),
                 "tile_pixels": ("INT", {"default": 1024, "min": 256, "max": 4096, "step": 64}),
                 "overlap_pixels": ("INT", {"default": 256, "min": 0, "max": 2048, "step": 32}),
@@ -109,6 +179,7 @@ class ArbitraryResolutionHierarchicalSampler:
         max_scale_per_stage,
         global_denoise,
         local_denoise,
+        local_sampler,
         global_max_megapixels,
         tile_pixels,
         overlap_pixels,
@@ -146,6 +217,7 @@ class ArbitraryResolutionHierarchicalSampler:
             lowfreq_factor=lowfreq_factor,
             upscale_mode=upscale_mode,
             tile_seed_mode=tile_seed_mode,
+            local_sampler=local_sampler,
             source_latent=source_latent,
         )
         return (latent, plan)
@@ -154,11 +226,13 @@ class ArbitraryResolutionHierarchicalSampler:
 NODE_CLASS_MAPPINGS = {
     "FractalLatentNoise": FractalLatentNoise,
     "ArbitraryResolutionPlan": ArbitraryResolutionPlan,
+    "ARTiledFusionSampler": ARTiledFusionSampler,
     "ArbitraryResolutionHierarchicalSampler": ArbitraryResolutionHierarchicalSampler,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "FractalLatentNoise": "Fractal Latent Noise",
     "ArbitraryResolutionPlan": "Arbitrary Resolution Plan",
+    "ARTiledFusionSampler": "AR Tiled Fusion Sampler",
     "ArbitraryResolutionHierarchicalSampler": "Arbitrary Resolution Hierarchical Sampler",
 }
