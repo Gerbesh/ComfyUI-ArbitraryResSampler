@@ -1,5 +1,13 @@
 ﻿# Changelog
 
+## 0.6.0
+
+- Added `AR Image Heatmap` for source-image structural guidance.
+- Added `AR Heatmap Preview` for visual inspection.
+- Added `AR Guided Latent Blend` for heatmap-controlled latent mixing and color preservation.
+- This is the first image-guided regional refine layer before deeper sampler-integrated heatmap control.
+
+
 ## 0.4.0
 
 - Added `AR VAE Encode Tiled`.

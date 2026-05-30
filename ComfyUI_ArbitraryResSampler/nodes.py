@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import comfy.samplers
 
@@ -7,6 +7,7 @@ from .noise import inject_fractal_noise
 from .resolution import build_stage_schedule, fit_base_resolution, format_stage_plan, normalize_resolution
 from .sampling import hierarchical_sample
 from .vae_tiled import ARVAEEncodeTiled, ARVAEDecodeTiled, ARVAERoundtrip
+from .image_guidance import ARImageHeatmap, ARHeatmapPreview, ARGuidedLatentBlend
 
 
 class FractalLatentNoise:
@@ -248,6 +249,9 @@ NODE_CLASS_MAPPINGS = {
     "ARVAEEncodeTiled": ARVAEEncodeTiled,
     "ARVAEDecodeTiled": ARVAEDecodeTiled,
     "ARVAERoundtrip": ARVAERoundtrip,
+    "ARImageHeatmap": ARImageHeatmap,
+    "ARHeatmapPreview": ARHeatmapPreview,
+    "ARGuidedLatentBlend": ARGuidedLatentBlend,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -258,6 +262,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ARVAEEncodeTiled": "AR VAE Encode Tiled",
     "ARVAEDecodeTiled": "AR VAE Decode Tiled",
     "ARVAERoundtrip": "AR VAE Roundtrip",
+    "ARImageHeatmap": "AR Image Heatmap",
+    "ARHeatmapPreview": "AR Heatmap Preview",
+    "ARGuidedLatentBlend": "AR Guided Latent Blend",
 }
 
 
