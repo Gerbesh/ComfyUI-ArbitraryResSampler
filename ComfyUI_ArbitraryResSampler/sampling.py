@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Optional
 
@@ -105,6 +105,12 @@ def tiled_refine(
     tile_seed_mode: str,
     conditioning_mode: str,
     local_sampler: str = "legacy",
+    guidance_heatmap: Optional[torch.Tensor] = None,
+    guidance_mode: str = "off",
+    source_anchor_strength: float = 0.0,
+    heatmap_strength: float = 0.0,
+    heatmap_gamma: float = 1.0,
+    source_color_preserve: float = 0.0,
 ) -> dict:
     if local_sampler == "ar_fusion":
         return sample_latent_ar_fusion(
@@ -126,6 +132,12 @@ def tiled_refine(
             tile_mode="always",
             tile_threshold_pixels=tile_pixels,
             disable_noise=False,
+            guidance_heatmap=guidance_heatmap,
+            guidance_mode=guidance_mode,
+            source_anchor_strength=source_anchor_strength,
+            heatmap_strength=heatmap_strength,
+            heatmap_gamma=heatmap_gamma,
+            source_color_preserve=source_color_preserve,
         )
 
     samples = latent["samples"]
@@ -233,6 +245,12 @@ def hierarchical_sample(
     local_sampler: str = "legacy",
     same_size_refine: bool = True,
     source_latent: Optional[dict] = None,
+    guidance_heatmap: Optional[torch.Tensor] = None,
+    guidance_mode: str = "off",
+    source_anchor_strength: float = 0.0,
+    heatmap_strength: float = 0.0,
+    heatmap_gamma: float = 1.0,
+    source_color_preserve: float = 0.0,
 ) -> tuple[dict, str]:
     target_width, target_height = normalize_resolution(target_width, target_height)
 
@@ -313,6 +331,12 @@ def hierarchical_sample(
                 tile_seed_mode=tile_seed_mode,
                 conditioning_mode=conditioning_mode,
                 local_sampler=local_sampler,
+                guidance_heatmap=guidance_heatmap,
+                guidance_mode=guidance_mode,
+                source_anchor_strength=source_anchor_strength,
+                heatmap_strength=heatmap_strength,
+                heatmap_gamma=heatmap_gamma,
+                source_color_preserve=source_color_preserve,
             )
     for stage_index, (stage_width, stage_height) in enumerate(stages[1:], start=1):
         latent = resize_latent(latent, stage_width, stage_height, mode=upscale_mode)
@@ -365,6 +389,12 @@ def hierarchical_sample(
                 tile_seed_mode=tile_seed_mode,
                 conditioning_mode=conditioning_mode,
                 local_sampler=local_sampler,
+                guidance_heatmap=guidance_heatmap,
+                guidance_mode=guidance_mode,
+                source_anchor_strength=source_anchor_strength,
+                heatmap_strength=heatmap_strength,
+                heatmap_gamma=heatmap_gamma,
+                source_color_preserve=source_color_preserve,
             )
 
     return latent, format_stage_plan(stages)

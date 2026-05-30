@@ -8,6 +8,7 @@ from .resolution import build_stage_schedule, fit_base_resolution, format_stage_
 from .sampling import hierarchical_sample
 from .vae_tiled import ARVAEEncodeTiled, ARVAEDecodeTiled, ARVAERoundtrip
 from .image_guidance import ARImageHeatmap, ARHeatmapPreview, ARGuidedLatentBlend
+from .guided_nodes import ARImageGuidedHierarchicalSampler
 
 
 class FractalLatentNoise:
@@ -252,6 +253,7 @@ NODE_CLASS_MAPPINGS = {
     "ARImageHeatmap": ARImageHeatmap,
     "ARHeatmapPreview": ARHeatmapPreview,
     "ARGuidedLatentBlend": ARGuidedLatentBlend,
+    "ARImageGuidedHierarchicalSampler": ARImageGuidedHierarchicalSampler,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -265,6 +267,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ARImageHeatmap": "AR Image Heatmap",
     "ARHeatmapPreview": "AR Heatmap Preview",
     "ARGuidedLatentBlend": "AR Guided Latent Blend",
+    "ARImageGuidedHierarchicalSampler": "AR Image Guided Hierarchical Sampler",
 }
 
 

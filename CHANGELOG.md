@@ -1,5 +1,14 @@
 ﻿# Changelog
 
+## 0.6.1
+
+- Added sampler-integrated heatmap guidance for AR tiled fusion.
+- Added `AR Image Guided Hierarchical Sampler` UX node.
+- Added per-tile source anchoring controlled by image heatmaps.
+- Added source low-frequency latent color preservation for guided img2img refine.
+- Kept existing sampler nodes backward compatible by adding new controls through new node paths and optional defaults.
+
+
 ## 0.6.0
 
 - Added `AR Image Heatmap` for source-image structural guidance.

@@ -51,6 +51,16 @@ class ARTiledSamplerConfig:
         return max(8, int(round(self.tile_threshold_pixels / LATENT_SCALE_FACTOR)))
 
 
+@dataclass(frozen=True)
+class ARGuidanceConfig:
+    heatmap: Optional[torch.Tensor] = None
+    mode: str = "off"  # off, detail, preserve, balanced
+    source_anchor_strength: float = 0.0
+    heatmap_strength: float = 0.0
+    heatmap_gamma: float = 1.0
+    source_color_preserve: float = 0.0
+
+
 def _max_denoise(model_wrap, sigmas: torch.Tensor) -> bool:
     max_sigma = float(model_wrap.inner_model.model_sampling.sigma_max)
     sigma = float(sigmas[0])
@@ -94,6 +104,106 @@ def _crop_nested(obj, full_h: int, full_w: int, y: int, x: int, h: int, w: int):
         return tuple(_crop_nested(value, full_h, full_w, y, x, h, w) for value in obj)
 
     return obj
+
+
+def _prepare_guidance_heatmap(
+    heatmap: Optional[torch.Tensor],
+    latent_height: int,
+    latent_width: int,
+    device,
+    dtype,
+) -> Optional[torch.Tensor]:
+    if heatmap is None:
+        return None
+
+    heat = heatmap
+    if heat.ndim == 4:
+        if heat.shape[-1] in (1, 3, 4):  # BHWC IMAGE
+            heat = heat[..., :1].permute(0, 3, 1, 2).contiguous()
+        elif heat.shape[1] in (1, 3, 4):  # BCHW
+            heat = heat[:, :1, :, :].contiguous()
+        else:
+            raise ValueError(f"Unsupported heatmap shape: {tuple(heat.shape)}")
+    elif heat.ndim == 3:
+        if heat.shape[-1] in (1, 3, 4):  # HWC
+            heat = heat[..., :1].unsqueeze(0).permute(0, 3, 1, 2).contiguous()
+        else:  # BHW
+            heat = heat.unsqueeze(1).contiguous()
+    elif heat.ndim == 2:
+        heat = heat.unsqueeze(0).unsqueeze(0).contiguous()
+    else:
+        raise ValueError(f"Unsupported heatmap shape: {tuple(heat.shape)}")
+
+    heat = heat.to(device=device, dtype=dtype)
+    if heat.shape[0] != 1:
+        heat = heat[:1]
+
+    heat = F.interpolate(
+        heat,
+        size=(latent_height, latent_width),
+        mode="bilinear",
+        align_corners=False,
+    )
+    return heat.clamp(0.0, 1.0)
+
+
+def _guided_source_weight(
+    heat_core: Optional[torch.Tensor],
+    guidance: Optional[ARGuidanceConfig],
+    reference: torch.Tensor,
+) -> Optional[torch.Tensor]:
+    if guidance is None or guidance.mode == "off":
+        return None
+
+    anchor = float(guidance.source_anchor_strength)
+    strength = float(guidance.heatmap_strength)
+
+    if anchor <= 0.0 and strength <= 0.0:
+        return None
+
+    if heat_core is None:
+        heat = torch.zeros(
+            (reference.shape[0], 1, reference.shape[-2], reference.shape[-1]),
+            device=reference.device,
+            dtype=reference.dtype,
+        )
+    else:
+        gamma = max(0.05, float(guidance.heatmap_gamma))
+        heat = heat_core.clamp(0.0, 1.0) ** gamma
+
+    mode = str(guidance.mode)
+    if mode == "detail":
+        # high heat means this region needs more generated detail, so less source anchoring
+        source_weight = anchor - heat * strength
+    elif mode == "preserve":
+        # high heat means risk/protection mask, so more source anchoring
+        source_weight = anchor + heat * strength
+    elif mode == "balanced":
+        # heat above 0.5 gets more model freedom, heat below 0.5 gets more source lock
+        source_weight = anchor + (0.5 - heat) * strength
+    else:
+        source_weight = torch.full_like(heat, anchor)
+
+    return source_weight.clamp(0.0, 0.95)
+
+
+def _apply_guided_core_blend(
+    denoised_core: torch.Tensor,
+    source_core: Optional[torch.Tensor],
+    heat_core: Optional[torch.Tensor],
+    guidance: Optional[ARGuidanceConfig],
+) -> torch.Tensor:
+    if source_core is None or guidance is None or guidance.mode == "off":
+        return denoised_core
+
+    if source_core.shape != denoised_core.shape:
+        return denoised_core
+
+    source_weight = _guided_source_weight(heat_core, guidance, denoised_core)
+    if source_weight is None:
+        return denoised_core
+
+    return denoised_core * (1.0 - source_weight) + source_core * source_weight
 
 
 def _prepare_tile_extra_args(
@@ -156,6 +266,8 @@ def _tiled_model_prediction(
     sigma: torch.Tensor,
     extra_args: dict,
     config: ARTiledSamplerConfig,
+    source_samples: Optional[torch.Tensor] = None,
+    guidance: Optional[ARGuidanceConfig] = None,
 ) -> torch.Tensor:
     batch, _, latent_height, latent_width = x.shape
     if batch != 1:
@@ -172,6 +284,16 @@ def _tiled_model_prediction(
 
     accumulator = torch.zeros_like(x)
     weights = torch.zeros((1, 1, latent_height, latent_width), device=x.device, dtype=x.dtype)
+
+    guidance_heatmap = None
+    if guidance is not None and guidance.mode != "off":
+        guidance_heatmap = _prepare_guidance_heatmap(
+            guidance.heatmap,
+            latent_height,
+            latent_width,
+            device=x.device,
+            dtype=x.dtype,
+        )
 
     for core_y in ys:
         for core_x in xs:
@@ -209,6 +331,31 @@ def _tiled_model_prediction(
                 core_rel_y:core_rel_y + current_core_height,
                 core_rel_x:core_rel_x + current_core_width,
             ]
+
+            source_core = None
+            if source_samples is not None and source_samples.shape[-2:] == x.shape[-2:]:
+                source_core = source_samples[
+                    :,
+                    :,
+                    core_y:core_y + current_core_height,
+                    core_x:core_x + current_core_width,
+                ]
+
+            heat_core = None
+            if guidance_heatmap is not None:
+                heat_core = guidance_heatmap[
+                    :,
+                    :,
+                    core_y:core_y + current_core_height,
+                    core_x:core_x + current_core_width,
+                ]
+
+            denoised_core = _apply_guided_core_blend(
+                denoised_core=denoised_core,
+                source_core=source_core,
+                heat_core=heat_core,
+                guidance=guidance,
+            )
 
             weight = feather_mask(
                 current_core_height,
@@ -273,6 +420,8 @@ def _predict_denoised(
     sigma: torch.Tensor,
     extra_args: dict,
     config: ARTiledSamplerConfig,
+    source_samples: Optional[torch.Tensor] = None,
+    guidance: Optional[ARGuidanceConfig] = None,
 ) -> torch.Tensor:
     if not _should_tile(x, config):
         direct_args = _prepare_global_context_args(
@@ -283,9 +432,32 @@ def _predict_denoised(
             context_w=x.shape[-1],
             conditioning_mode=config.conditioning_mode,
         )
-        return _call_model(model, x, sigma, direct_args)
+        direct_prediction = _call_model(model, x, sigma, direct_args)
+        if guidance is not None and guidance.mode != "off" and source_samples is not None:
+            heat = _prepare_guidance_heatmap(
+                guidance.heatmap,
+                x.shape[-2],
+                x.shape[-1],
+                device=x.device,
+                dtype=x.dtype,
+            )
+            direct_prediction = _apply_guided_core_blend(
+                denoised_core=direct_prediction,
+                source_core=source_samples if source_samples.shape == direct_prediction.shape else None,
+                heat_core=heat,
+                guidance=guidance,
+            )
+        return direct_prediction
 
-    tiled_prediction = _tiled_model_prediction(model, x, sigma, extra_args, config)
+    tiled_prediction = _tiled_model_prediction(
+        model,
+        x,
+        sigma,
+        extra_args,
+        config,
+        source_samples=source_samples,
+        guidance=guidance,
+    )
     global_prediction = _global_context_prediction(model, x, sigma, extra_args, config)
 
     if global_prediction is not None and config.global_context_strength > 0.0:
@@ -296,12 +468,30 @@ def _predict_denoised(
             strength=config.global_context_strength,
         )
 
+    if (
+        guidance is not None
+        and source_samples is not None
+        and float(guidance.source_color_preserve) > 0.0
+        and source_samples.shape == tiled_prediction.shape
+    ):
+        tiled_prediction = low_frequency_preserve(
+            source_samples=source_samples,
+            refined_samples=tiled_prediction,
+            factor=config.lowfreq_factor,
+            strength=float(guidance.source_color_preserve),
+        )
+
     return tiled_prediction
 
 
 class AREulerTiledFusionSampler:
-    def __init__(self, config: Optional[ARTiledSamplerConfig] = None):
+    def __init__(
+        self,
+        config: Optional[ARTiledSamplerConfig] = None,
+        guidance: Optional[ARGuidanceConfig] = None,
+    ):
         self.config = config or ARTiledSamplerConfig()
+        self.guidance = guidance
 
     def sample(
         self,
@@ -341,7 +531,15 @@ class AREulerTiledFusionSampler:
             if float(sigma) <= 0.0:
                 continue
 
-            denoised = _predict_denoised(model, x, sigma, extra_args, self.config)
+            denoised = _predict_denoised(
+                model,
+                x,
+                sigma,
+                extra_args,
+                self.config,
+                source_samples=latent_image,
+                guidance=self.guidance,
+            )
             derivative = (x - denoised) / sigma
             dt = sigma_next - sigma
             x = x + derivative * dt
@@ -387,6 +585,12 @@ def sample_latent_ar_fusion(
     tile_mode: str = "auto",
     tile_threshold_pixels: int = 1536,
     disable_noise: bool = False,
+    guidance_heatmap: Optional[torch.Tensor] = None,
+    guidance_mode: str = "off",
+    source_anchor_strength: float = 0.0,
+    heatmap_strength: float = 0.0,
+    heatmap_gamma: float = 1.0,
+    source_color_preserve: float = 0.0,
 ) -> dict:
     latent_image = latent["samples"]
     latent_image = comfy.sample.fix_empty_latent_channels(model, latent_image)
@@ -403,6 +607,21 @@ def sample_latent_ar_fusion(
         noise = comfy.sample.prepare_noise(latent_image, int(seed), batch_indices)
 
     sigmas = calculate_sigmas(model, steps=steps, scheduler=scheduler, denoise=denoise)
+    guidance = None
+    if str(guidance_mode) != "off" and (
+        guidance_heatmap is not None
+        or float(source_anchor_strength) > 0.0
+        or float(source_color_preserve) > 0.0
+    ):
+        guidance = ARGuidanceConfig(
+            heatmap=guidance_heatmap,
+            mode=str(guidance_mode),
+            source_anchor_strength=float(source_anchor_strength),
+            heatmap_strength=float(heatmap_strength),
+            heatmap_gamma=float(heatmap_gamma),
+            source_color_preserve=float(source_color_preserve),
+        )
+
     sampler = AREulerTiledFusionSampler(
         ARTiledSamplerConfig(
             tile_pixels=int(tile_pixels),
@@ -414,7 +633,8 @@ def sample_latent_ar_fusion(
             tile_mode=tile_mode,
             tile_threshold_pixels=int(tile_threshold_pixels),
             conditioning_mode=conditioning_mode,
-        )
+        ),
+        guidance=guidance,
     )
 
     samples = comfy.sample.sample_custom(
